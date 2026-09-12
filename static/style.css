@@ -113,6 +113,7 @@ body {
 .panel-head h2 { margin: 0; font-size: 15px; }
 
 .alarm-panel { grid-column: 1 / -1; }
+.risk-panel { grid-column: 1 / -1; }
 
 .hint { color: var(--muted); font-size: 12px; }
 .live-dot {
@@ -185,7 +186,7 @@ body {
 /* 决策流 */
 .flow-head, .flow-row {
   display: grid;
-  grid-template-columns: 120px 70px 90px 110px 70px 1fr 60px;
+  grid-template-columns: 110px 70px 76px 90px 110px 70px 1fr 60px;
   gap: 8px;
   align-items: center;
   padding: 8px 16px;
@@ -213,6 +214,11 @@ body {
 .badge.PASS { background: var(--pass); }
 .badge.REVIEW { background: var(--review); }
 .badge.REJECT { background: var(--reject); }
+/* 用户风险等级徽章 */
+.badge.LV-LOW { background: var(--pass); }
+.badge.LV-MEDIUM { background: var(--review); }
+.badge.LV-HIGH { background: var(--reject); }
+.badge.LV-CRITICAL { background: #7f1d1d; }
 .rules-hit { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chip {
   background: #243050;
@@ -224,6 +230,39 @@ body {
 }
 .score { color: var(--muted); font-size: 11px; }
 .empty { padding: 24px; color: var(--muted); text-align: center; }
+
+/* 用户风险画像 */
+.risk-head, .risk-row {
+  display: grid;
+  grid-template-columns: 110px 100px 150px 70px 100px 60px 120px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 16px;
+}
+.risk-head {
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.risk-list { overflow-y: auto; max-height: 300px; }
+.risk-row { border-bottom: 1px solid #1d2740; font-size: 12px; }
+.risk-row:last-child { border-bottom: none; }
+.risk-row .time { color: var(--muted); font-size: 11px; }
+.score-bar {
+  display: inline-block;
+  width: 56px; height: 6px;
+  background: #0e1424;
+  border-radius: 3px;
+  overflow: hidden;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+.score-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--pass), var(--review), var(--reject));
+}
 
 /* 告警 */
 .alarm-list { overflow-y: auto; max-height: 320px; }

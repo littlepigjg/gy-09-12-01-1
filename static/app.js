@@ -36,6 +36,8 @@ async function api(path, opts) {
 /* ---------------- 统计 ---------------- */
 function renderStats(s) {
   const e = s.engine || {};
+  const rl = s.risk_levels || {};
+  const highRisk = (rl.HIGH || 0) + (rl.CRITICAL || 0);
   $("#statsBar").innerHTML = `
     <div class="stat"><div class="num">${s.total_events}</div><div class="lbl">事件总数</div></div>
     <div class="stat pass"><div class="num">${s.decisions.PASS}</div><div class="lbl">通过</div></div>
@@ -43,6 +45,7 @@ function renderStats(s) {
     <div class="stat reject"><div class="num">${s.decisions.REJECT}</div><div class="lbl">拒绝</div></div>
     <div class="stat"><div class="num">${e.rule_count || 0}</div><div class="lbl">启用规则</div></div>
     <div class="stat reject"><div class="num">${s.open_alarms}</div><div class="lbl">未处理告警</div></div>
+    <div class="stat reject"><div class="num">${highRisk}</div><div class="lbl">高风险用户</div></div>
     <div class="stat"><div class="num">${e.node_count || 0}</div><div class="lbl">决策树节点</div></div>
   `;
 }
@@ -170,6 +173,11 @@ async function removeRule(id) {
 }
 
 /* ---------------- 决策流 ---------------- */
+function riskBadge(level) {
+  if (!level) return '<span class="hint">-</span>';
+  return `<span class="badge LV-${level}">${level}</span>`;
+}
+
 function renderFlow() {
   const el = $("#flowList");
   if (!state.feed.length) {
@@ -182,6 +190,7 @@ function renderFlow() {
     return `<div class="flow-row">
       <span class="time">${esc(String(d.created_at).slice(11, 19))}</span>
       <span>${esc(d.user_id)}</span>
+      <span>${riskBadge(d.risk_level)}</span>
       <span class="mono">¥${fmt(d.amount)}</span>
       <span>${esc(d.merchant)}</span>
       <span><span class="badge ${d.decision}">${d.decision}</span></span>
@@ -190,6 +199,24 @@ function renderFlow() {
     </div>`;
   }).join("");
   el.scrollTop = el.scrollHeight;
+}
+
+/* ---------------- 用户风险画像 ---------------- */
+function renderUserRisk(rows) {
+  $("#riskCount").textContent = `${rows.length} 个用户`;
+  const el = $("#riskList");
+  if (!rows.length) { el.innerHTML = '<div class="empty">暂无用户交易记录</div>'; return; }
+  el.innerHTML = rows.map((u) => `
+    <div class="risk-row">
+      <span class="mono">${esc(u.user_id)}</span>
+      <span>${riskBadge(u.level)}</span>
+      <span class="mono"><span class="score-bar"><i style="width:${u.score}%"></i></span>${Number(u.score).toFixed(0)}</span>
+      <span class="mono">${u.tx_count}</span>
+      <span class="mono">${u.reject_count} / ${u.review_count}</span>
+      <span class="mono">${u.night_count}</span>
+      <span class="mono">¥${fmt(u.total_amount)}</span>
+      <span class="time">${esc(String(u.last_tx_at || "-").slice(5, 19))}</span>
+    </div>`).join("");
 }
 
 /* ---------------- 告警 ---------------- */
@@ -274,13 +301,15 @@ async function loadRules() {
 
 async function refresh() {
   try {
-    const [stats, alarms, decisions] = await Promise.all([
+    const [stats, alarms, decisions, userRisk] = await Promise.all([
       api("/api/stats"),
       api("/api/alarms"),
       api("/api/decisions?since_id=" + state.lastDecisionId + "&limit=100"),
+      api("/api/users/risk?limit=50"),
     ]);
     if (stats && stats.decisions) renderStats(stats);
     if (Array.isArray(alarms)) renderAlarms(alarms);
+    if (Array.isArray(userRisk)) renderUserRisk(userRisk);
     if (Array.isArray(decisions) && decisions.length) {
       const maxId = Math.max(...decisions.map((d) => d.id));
       if (maxId > state.lastDecisionId) state.lastDecisionId = maxId;

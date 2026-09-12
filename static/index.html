@@ -10,7 +10,7 @@
   <header class="topbar">
     <div class="brand">
       <h1>实时交易风控系统</h1>
-      <p class="subtitle">规则引擎 · 滑动窗口聚合 · 规则热更新 · 告警去重</p>
+      <p class="subtitle">规则引擎 · 滑动窗口聚合 · 用户风险画像 · 规则热更新 · 告警去重</p>
     </div>
     <div class="stats" id="statsBar"></div>
   </header>
@@ -78,9 +78,21 @@
         <span class="live-dot">LIVE</span>
       </div>
       <div class="flow-head">
-        <span>时间</span><span>用户</span><span>金额</span><span>商户</span><span>决策</span><span>命中规则 / 评分</span><span>耗时</span>
+        <span>时间</span><span>用户</span><span>风险</span><span>金额</span><span>商户</span><span>决策</span><span>命中规则 / 评分</span><span>耗时</span>
       </div>
       <div class="flow-list" id="flowList"></div>
+    </section>
+
+    <!-- 用户风险画像 -->
+    <section class="panel risk-panel">
+      <div class="panel-head">
+        <h2>用户风险画像</h2>
+        <span class="hint" id="riskCount"></span>
+      </div>
+      <div class="risk-head">
+        <span>用户</span><span>等级</span><span>评分</span><span>交易数</span><span>被拦 / 审核</span><span>深夜</span><span>累计金额</span><span>最近交易</span>
+      </div>
+      <div class="risk-list" id="riskList"></div>
     </section>
 
     <!-- 报警列表 -->

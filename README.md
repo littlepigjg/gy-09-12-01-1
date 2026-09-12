@@ -1,15 +1,16 @@
 # 实时交易风控系统
 
-基于 Python + Flask + MySQL 的实时交易风控系统。接收交易事件（用户 ID、金额、商户、时间），根据 JSON 定义的规则进行实时风险评估，输出 **通过（PASS）/ 拒绝（REJECT）/ 人工审核（REVIEW）** 三种决策，并提供规则配置、实时决策流和报警列表的可视化前端。
+基于 Python + Flask + MySQL 的实时交易风控系统。接收交易事件（用户 ID、金额、商户、时间），根据 JSON 定义的规则进行实时风险评估，输出 **通过（PASS）/ 拒绝（REJECT）/ 人工审核（REVIEW）** 三种决策，并提供规则配置、实时决策流、用户风险画像和报警列表的可视化前端。
 
 ## 功能特性
 
 - **规则引擎**：规则以 JSON 定义，支持单笔条件与滑动窗口聚合两类规则。
+- **用户风险画像**：基于历史行为为每个用户维护可升可降的风险评分与四档等级（LOW / MEDIUM / HIGH / CRITICAL），新用户中性偏保守起步，等级可直接被规则引用。
 - **高效匹配**：基于决策树对规则条件做共享求值与路径剪枝，避免逐条线性扫描。
 - **精确滑动窗口**：按分组键维护事件 `deque`，新事件先剔除过期再聚合，非分桶近似。
 - **规则热更新**：规则变更后无需重启进程，后台线程轮询版本号自动重建引擎。
 - **告警去重**：以「规则 + 用户 + 时间桶」为去重键，窗口内只累计不刷屏。
-- **可视化前端**：规则配置、实时风控决策流、报警列表三大面板，1s 自动刷新。
+- **可视化前端**：规则配置、实时风控决策流、用户风险画像、报警列表四大面板，1s 自动刷新。
 
 ## 技术栈
 
@@ -23,8 +24,10 @@
 ```
 .
 ├── app.py                 # Flask 入口与 REST API
-├── config.py              # 配置（数据库、端口、热更新间隔）
-├── db.py                  # MySQL 连接、建表、种子规则、版本号
+├── config.py              # 配置（数据库、端口、热更新间隔、风险评分参数）
+├── db.py                  # MySQL 连接、建表、种子规则、版本号、用户画像读写
+├── risk_score.py          # 用户风险评分模型（纯逻辑，可独立测试）
+├── test_risk_score.py     # 评分模型单元测试（python3 test_risk_score.py）
 ├── engine/
 │   ├── rules.py           # 规则 JSON 解析与条件求值
 │   ├── matcher.py         # 决策树规则匹配器
@@ -79,7 +82,7 @@ python3 -m pip install --break-system-packages -r requirements.txt
 python3 app.py
 ```
 
-默认连接 `127.0.0.1:3306` 的 MySQL（`root/root`），监听端口 `8002`。首次启动会自动建库建表并写入 6 条种子规则。
+默认连接 `127.0.0.1:3306` 的 MySQL（`root/root`），监听端口 `8002`。首次启动会自动建库建表并写入 8 条种子规则。
 
 ## 环境变量配置
 
@@ -92,6 +95,9 @@ python3 app.py
 | `MYSQL_DATABASE` | `risk_control` | 数据库名 |
 | `PORT` | `8002` | 服务监听端口 |
 | `HOT_RELOAD_INTERVAL` | `2.0` | 规则热更新轮询间隔（秒） |
+| `RISK_NEW_USER_SCORE` | `40` | 新用户起始风险分（0-100，中性偏保守） |
+| `RISK_HALF_LIFE_HOURS` | `24` | 风险评分半衰期（小时），越小历史遗忘越快 |
+| `RISK_FREQ_HALF_LIFE_HOURS` | `1` | 频率计数半衰期（小时），高频是短期信号 |
 
 ## 规则 JSON 定义
 
@@ -133,6 +139,8 @@ python3 app.py
 | `merchant` | 商户（字符串） |
 | `time` | 事件时间戳（秒） |
 | `hour` | 事件小时（0-23，派生字段） |
+| `user_risk_score` | 用户当前风险评分（0-100，派生字段） |
+| `user_risk_level` | 用户当前风险等级（LOW / MEDIUM / HIGH / CRITICAL，派生字段） |
 
 ### 条件运算符 `op`
 
@@ -160,6 +168,50 @@ python3 app.py
 | 短时累计金额异常 | 窗口 | 同一用户 300s 内累计金额 > 50000 → REVIEW |
 | 深夜大额交易 | 条件 | `0 ≤ hour < 6` 且 `amount > 2000` → REVIEW |
 | 高风险商户拦截 | 条件 | `merchant in [black_shop, ...]` → REJECT |
+| 高风险用户交易审核 | 条件 | `user_risk_level = HIGH` → REVIEW |
+| 极高风险用户拦截 | 条件 | `user_risk_level = CRITICAL` → REJECT |
+
+## 用户风险画像与等级
+
+系统在每笔交易落库的同时，为每个用户维护一个 **0~100 的风险评分**，映射为四档等级：
+
+| 等级 | 分数区间 | 含义 |
+|---|---|---|
+| LOW | < 30 | 表现良好，可信 |
+| MEDIUM | 30 ~ 59 | 中性 / 需关注（新用户起点所在档） |
+| HIGH | 60 ~ 84 | 高风险，建议人工审核 |
+| CRITICAL | ≥ 85 | 极高风险，建议直接拦截 |
+
+### 评分模型（`risk_score.py`）
+
+- **新用户起点**：无历史记录的用户从 40 分（MEDIUM）起步 —— 中性偏保守，既不盲目信任，也不一棒子打死。首笔正常交易即开始建立信任，持续良好行为可降入 LOW。
+- **行为加减分**：每笔交易按风控决策调整 —— `REJECT +20`、`REVIEW +8`、`PASS -2`；大额（≥5000 / ≥10000）、深夜（0-6 点）、短时高频（约 1 小时内 > 10 笔）分别附加 +3 / +6、+2、+5。
+- **时间衰减**：评分按 24 小时半衰期指数衰减（频率计数按 1 小时半衰期）—— 用户变老实后，等级随良好行为和时间推移下降，**不会只升不降**。
+- **累计统计**：交易数、被拦次数、审核次数、深夜笔数、累计金额全量累计，在「用户风险画像」面板一眼可见。
+
+### 在规则中引用风险等级
+
+评估前系统会把 `user_risk_score` / `user_risk_level` 作为派生字段注入事件，规则条件可直接引用（与 `hour` 相同的方式），例如：
+
+```json
+{
+  "description": "极高风险用户直接拒绝",
+  "action": "REJECT",
+  "priority": 95,
+  "weight": 10,
+  "conditions": [{"field": "user_risk_level", "op": "eq", "value": "CRITICAL"}]
+}
+```
+
+或用评分阈值：`{"field": "user_risk_score", "op": "gte", "value": 60}`。
+
+> 注意：种子规则「极高风险用户拦截」会让 CRITICAL 用户的交易持续被拦、无法通过 PASS 降分，其等级依靠时间衰减回落。可按需停用或调低该规则强度。
+
+评分模型的行为（新用户起点、能升能降、时间衰减、频率信号等）由 `test_risk_score.py` 中的单元测试保证：
+
+```bash
+python3 test_risk_score.py
+```
 
 ## REST API
 
@@ -173,6 +225,8 @@ python3 app.py
 | POST | `/api/events` | 接入单笔交易事件 |
 | POST | `/api/simulate` | 批量模拟交易事件 |
 | GET | `/api/decisions?since_id=&limit=` | 查询决策流（支持增量拉取） |
+| GET | `/api/users/risk?limit=&level=` | 用户风险画像列表（按评分降序，可按等级过滤） |
+| GET | `/api/users/<user_id>/risk` | 单个用户风险画像（新用户返回中性默认值） |
 | GET | `/api/alarms?status=OPEN` | 查询告警 |
 | POST | `/api/alarms/<id>/resolve` | 处理告警 |
 | GET | `/api/stats` | 统计信息（事件/决策/引擎） |
@@ -204,8 +258,9 @@ curl -X POST http://localhost:8002/api/events \
 |---|---|
 | `rules` | 规则（`definition` 为 JSON 定义） |
 | `events` | 交易事件 |
-| `decisions` | 风控决策流 |
+| `decisions` | 风控决策流（含决策时用户风险等级快照） |
 | `alarms` | 告警（含 `dedup_key` 唯一键去重） |
+| `user_risk` | 用户风险画像（评分、等级、累计统计） |
 | `meta` | 规则配置版本号（热更新探测） |
 
 ## 核心难点实现
@@ -214,3 +269,4 @@ curl -X POST http://localhost:8002/api/events \
 2. **滑动窗口精确聚合**：`engine/window.py` 按 `(规则, 分组键)` 维护事件时间戳 `deque`，新事件到达时先剔除 `ts < now - window` 的过期元素再聚合，得到精确的滑动窗口结果。
 3. **规则动态加载**：规则写入时自增 `meta.rules_version`；`engine/engine.py` 的后台守护线程轮询该版本号，变化即加锁重建规则与决策树，全程无需重启。
 4. **告警去重**：告警以 `规则ID:用户ID:时间桶` 为 `dedup_key`，使用 `INSERT ... ON DUPLICATE KEY UPDATE hit_count = hit_count + 1` 实现窗口内去重累计，避免告警风暴。
+5. **用户风险评分**：`risk_score.py` 将决策结果、金额、时段、频率折算为加减分项，并以 24h 半衰期对历史评分做指数衰减，保证等级能升能降；评分与等级作为派生字段注入事件（`user_risk_score` / `user_risk_level`），规则引擎零改动即可在条件中引用。

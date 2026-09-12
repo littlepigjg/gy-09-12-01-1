@@ -9,6 +9,7 @@ from datetime import datetime
 from flask import Flask, jsonify, request
 
 import db
+import risk_score
 from config import HTTP_PORT
 from engine.engine import RiskEngine
 
@@ -79,13 +80,46 @@ def _upsert_alarm(cur, event, event_id, m):
     )
 
 
+# ---------------- 用户风险画像 ----------------
+def _risk_json(p: dict):
+    """画像行 → API 输出（时间戳转可读字符串，分数保留一位小数）。"""
+    def fmt_ts(ts):
+        return datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M:%S") if ts else None
+    return {
+        "user_id": p["user_id"],
+        "score": round(float(p["score"]), 1),
+        "level": p["level"],
+        "tx_count": int(p["tx_count"]),
+        "reject_count": int(p["reject_count"]),
+        "review_count": int(p["review_count"]),
+        "night_count": int(p["night_count"]),
+        "total_amount": float(p["total_amount"]),
+        "first_seen_at": fmt_ts(p.get("first_seen_ts")),
+        "last_tx_at": fmt_ts(p.get("last_tx_ts")),
+        "is_new": bool(p.get("is_new", False)),
+    }
+
+
 # ---------------- 事件处理核心 ----------------
 def process_event(payload: dict):
     event, now = normalize_event(payload)
-    result = get_engine().evaluate(event)
     conn = db.get_connection()
     event_id = None
     try:
+        with conn.cursor() as cur:
+            profile = db.fetch_user_risk(event["user_id"], cur=cur)
+        if profile is None:
+            profile = risk_score.default_profile(event["user_id"])
+        # 风险等级注入事件（与 hour 同为派生字段），规则条件可直接引用
+        # user_risk_score / user_risk_level，引擎无需改动
+        event["user_risk_score"] = round(float(profile["score"]), 1)
+        event["user_risk_level"] = profile["level"]
+
+        result = get_engine().evaluate(event)
+
+        # 用本次决策结果更新画像：风险行为加分、良好行为减分、历史随时间衰减
+        updated = risk_score.update_profile(profile, event, result["decision"], event["time"])
+
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO events (user_id, amount, merchant, event_time) VALUES (%s,%s,%s,%s)",
@@ -93,19 +127,21 @@ def process_event(payload: dict):
             )
             event_id = cur.lastrowid
             cur.execute(
-                "INSERT INTO decisions (event_id, user_id, amount, merchant, decision, score, matched_rules, latency_ms) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO decisions (event_id, user_id, amount, merchant, decision, score, matched_rules, latency_ms, risk_level, risk_score) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (event_id, event["user_id"], event["amount"], event["merchant"],
                  result["decision"], result["score"],
-                 json.dumps(result["matched"], ensure_ascii=False), result["latency_ms"]),
+                 json.dumps(result["matched"], ensure_ascii=False), result["latency_ms"],
+                 event["user_risk_level"], event["user_risk_score"]),
             )
             for m in result["matched"]:
                 if m["action"] in ("REJECT", "REVIEW"):
                     _upsert_alarm(cur, event, event_id, m)
+            db.save_user_risk(cur, updated)
         conn.commit()
     finally:
         conn.close()
-    return {"event_id": event_id, "event": event, **result}
+    return {"event_id": event_id, "event": event, "user_risk": _risk_json(updated), **result}
 
 
 # ---------------- 前端页面 ----------------
@@ -250,6 +286,25 @@ def simulate():
 
 
 # ---------------- 查询 ----------------
+@app.route("/api/users/risk", methods=["GET"])
+def user_risk_list():
+    limit = min(request.args.get("limit", type=int, default=100), 500)
+    level = request.args.get("level", "").upper()
+    if level not in risk_score.LEVELS:
+        level = None
+    rows = db.fetch_user_risk_list(limit, level=level)
+    return jsonify([_risk_json(r) for r in rows])
+
+
+@app.route("/api/users/<uid>/risk", methods=["GET"])
+def user_risk_detail(uid):
+    row = db.fetch_user_risk(uid)
+    if row is None:
+        # 新用户：返回中性偏保守的默认画像，不强制落库
+        return jsonify(_risk_json(risk_score.default_profile(uid)))
+    return jsonify(_risk_json(row))
+
+
 @app.route("/api/decisions", methods=["GET"])
 def decisions():
     since = request.args.get("since_id", type=int, default=0)
@@ -318,6 +373,7 @@ def stats():
             open_alarms = cur.fetchone()["c"]
     finally:
         conn.close()
+    risk_levels = db.risk_level_counts()
     return jsonify({
         "total_events": total_events,
         "decisions": {
@@ -326,6 +382,7 @@ def stats():
             "REVIEW": breakdown.get("REVIEW", 0),
         },
         "open_alarms": open_alarms,
+        "risk_levels": {lv: risk_levels.get(lv, 0) for lv in risk_score.LEVELS},
         "engine": get_engine().stats(),
     })
 
