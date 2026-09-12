@@ -1,0 +1,20 @@
+"""全局配置。"""
+import os
+
+# MySQL 连接配置
+DB_CONFIG = {
+    "host": os.getenv("MYSQL_HOST", "127.0.0.1"),
+    "port": int(os.getenv("MYSQL_PORT", "3306")),
+    "user": os.getenv("MYSQL_USER", "root"),
+    "password": os.getenv("MYSQL_PASSWORD", "root"),
+    "database": os.getenv("MYSQL_DATABASE", "risk_control"),
+    "charset": "utf8mb4",
+    "autocommit": True,
+    "cursorclass": None,  # 在 db 模块中动态设置
+}
+
+# 服务端口
+HTTP_PORT = int(os.getenv("PORT", "8002"))
+
+# 规则热更新轮询间隔（秒）
+HOT_RELOAD_INTERVAL = float(os.getenv("HOT_RELOAD_INTERVAL", "2.0"))

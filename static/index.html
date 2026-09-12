@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>实时交易风控系统</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>实时交易风控系统</h1>
+      <p class="subtitle">规则引擎 · 滑动窗口聚合 · 规则热更新 · 告警去重</p>
+    </div>
+    <div class="stats" id="statsBar"></div>
+  </header>
+
+  <section class="controls">
+    <div class="control-group">
+      <button id="btnSimulate" class="btn btn-primary">▶ 开始模拟交易</button>
+      <button id="btnBurst" class="btn">⚡ 高频冲击（10笔）</button>
+      <button id="btnClearFeed" class="btn">清空本地视图</button>
+    </div>
+    <div class="control-group manual">
+      <input id="mUser" type="text" value="u9001" placeholder="用户ID" />
+      <input id="mAmount" type="number" value="12000" placeholder="金额" />
+      <input id="mMerchant" type="text" value="shop_a" placeholder="商户" />
+      <button id="btnManual" class="btn btn-outline">发送单笔交易</button>
+    </div>
+  </section>
+
+  <main class="grid">
+    <!-- 规则配置 -->
+    <section class="panel rules-panel">
+      <div class="panel-head">
+        <h2>规则配置</h2>
+        <button id="btnAddRule" class="btn btn-sm">+ 新增规则</button>
+      </div>
+      <form id="ruleForm" class="rule-form hidden">
+        <input type="hidden" id="ruleId" />
+        <div class="form-row">
+          <label>名称 <input id="rName" type="text" placeholder="规则名称" /></label>
+          <label>动作
+            <select id="rAction">
+              <option value="REJECT">REJECT 拒绝</option>
+              <option value="REVIEW">REVIEW 人工审核</option>
+            </select>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>优先级 <input id="rPriority" type="number" value="50" /></label>
+          <label>权重 <input id="rWeight" type="number" value="5" /></label>
+          <label>去重窗口(s) <input id="rDedup" type="number" value="60" /></label>
+        </div>
+        <div class="form-row">
+          <label class="grow">条件(JSON 数组)
+            <textarea id="rConditions" rows="2">[{"field":"amount","op":"gt","value":10000}]</textarea>
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="grow">窗口(JSON 对象，可空)
+            <textarea id="rWindow" rows="2" placeholder='{"seconds":60,"group_by":"user_id","agg":"count","op":"gt","value":5}'></textarea>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm">保存规则</button>
+          <button type="button" id="btnCancelRule" class="btn btn-sm">取消</button>
+          <span id="formHint" class="hint"></span>
+        </div>
+      </form>
+      <div class="rule-list" id="ruleList"></div>
+    </section>
+
+    <!-- 实时决策流 -->
+    <section class="panel flow-panel">
+      <div class="panel-head">
+        <h2>实时风控决策流</h2>
+        <span class="live-dot">LIVE</span>
+      </div>
+      <div class="flow-head">
+        <span>时间</span><span>用户</span><span>金额</span><span>商户</span><span>决策</span><span>命中规则 / 评分</span><span>耗时</span>
+      </div>
+      <div class="flow-list" id="flowList"></div>
+    </section>
+
+    <!-- 报警列表 -->
+    <section class="panel alarm-panel">
+      <div class="panel-head">
+        <h2>报警列表</h2>
+        <span class="hint" id="alarmCount"></span>
+      </div>
+      <div class="alarm-list" id="alarmList"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
