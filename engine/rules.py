@@ -3,6 +3,8 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+from risk_score import RISK_FIELDS
+
 
 class Condition:
     """一条原子条件，如 field='amount' op='gt' value=10000。"""
@@ -44,6 +46,8 @@ class Rule:
         self.conditions: List[Condition] = [
             Condition(c["field"], c["op"], c["value"]) for c in raw.get("conditions", [])
         ]
+        # 引用风险画像字段的规则是评分的结果而非原因，其命中不回灌评分
+        self.uses_risk_level = any(c.field in RISK_FIELDS for c in self.conditions)
         self.window: Optional[Dict[str, Any]] = raw.get("window")
 
 

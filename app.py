@@ -117,8 +117,10 @@ def process_event(payload: dict):
 
         result = get_engine().evaluate(event)
 
-        # 用本次决策结果更新画像：风险行为加分、良好行为减分、历史随时间衰减
-        updated = risk_score.update_profile(profile, event, result["decision"], event["time"])
+        # 用本次评估结果更新画像。评分调节基于剔除风险等级规则后的
+        # 行为决策，避免「等级高 → 自动拦截 → 拦截加分 → 等级更高」的
+        # 自强化回路；被拦/审核次数仍按真实决策累计
+        updated = risk_score.update_from_result(profile, event, result, event["time"])
 
         with conn.cursor() as cur:
             cur.execute(

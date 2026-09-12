@@ -88,6 +88,8 @@ class RiskEngine:
                     "weight": r.weight,
                     "dedup_seconds": r.dedup_seconds,
                     "agg_value": round(agg, 2) if r.window else None,
+                    # 评分回路据此剔除风险等级规则，避免自强化锁死
+                    "uses_risk_level": r.uses_risk_level,
                 }
                 for r, agg in triggered
             ],
